@@ -1,5 +1,18 @@
+# What's this fork?
+
+This temporary fork replaces HLS with direct/static HTTP streaming so Jellyfin serves the original file with no transcoding. [Why?](https://github.com/wujekbogdan/jellio-plus-plus/issues/12)
+
+> [!IMPORTANT]
+> Now it's up to your device's hardware and media player whether the file can be played. So, make sure to download video files that are supported by your device(s).
+
+## Installation
+
+1. Just install [wujekbogdan's Jellio++](https://github.com/wujekbogdan/jellio-plus-plus) (v1.5.0)
+2. Go to Jellyfin's plugins folder and replace the `.dll` file with [this .dll](https://github.com/Tetrax-10/jellio-plus-plus-http/releases/download/v1.5.0/Jellyfin.Plugin.Jellio.dll)
+3. Restart jellyfin.
+
 # Jellio++
-[![Release](https://img.shields.io/github/v/release/wujekbogdan/jellio-plus-plus)](https://github.com/wujekbogdan/jellio-plus-plus/releases)
+[![Release](https://img.shields.io/github/v/release/Tetrax-10/jellio-plus-plus-http)](https://github.com/Tetrax-10/jellio-plus-plus-http/releases)
 
 Stream your Jellyfin library directly in Stremio with seamless integration.
 
@@ -7,7 +20,9 @@ Stream your Jellyfin library directly in Stremio with seamless integration.
 
 - [**Jellio**](https://github.com/vanchaxy/jellio) by [Vanchaxy](https://github.com/vanchaxy) - the original Jellyfin↔Stremio bridge.
 - [**Jellio+**](https://github.com/InfiniteAvenger/jellio-plus) by [InfiniteAvenger](https://github.com/InfiniteAvenger) - fork adding Jellyfin 10.11.x support.
-- **Jellio++** - this fork. Adds HLS streaming with proper seeking, OpenSubtitles hashes for subtitle matching, public base URL support, and a few other fixes upstream hasn't taken yet.
+- [**Jellio++**](https://github.com/wujekbogdan/jellio-plus-plus) by [wujekbogdan](https://github.com/wujekbogdan) - fork adding HLS streaming with proper seeking, OpenSubtitles hashes for subtitle matching, public base URL support, and a few other fixes upstream hasn't taken yet.
+- **Jellio++ (this fork)** - replaces HLS with direct/static HTTP streaming so Jellyfin serves the original file with no forced transcoding.
+
 
 Every fork gets another `+`. We don't make the rules.
 
