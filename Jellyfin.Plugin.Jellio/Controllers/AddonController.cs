@@ -176,26 +176,25 @@ public class AddonController : ControllerBase
             return dto.MediaSources.Select(source =>
             {
                 /*
-                 * Jellyfin's HLS endpoint requires the caller to declare which codecs the player supports.
-                 * It compares these against the media file's codecs to decide whether to pass through without re-encoding or transcode.
+                 * We use Jellyfin's direct/static stream endpoint instead of the HLS (master.m3u8) endpoint.
+                 * "static=true" tells Jellyfin to serve the original file bytes as-is, with no transcoding,
+                 * no remuxing, and no HLS segmenting - regardless of client codec support.
                  *
-                 * Stremio's addon protocol has no mechanism for the client to advertise its codec capabilities to addons, so we hardcode them here. The lists below reflect what Stremio's players can decode. This is the same pattern every Jellyfin client follows - e.g. jellyfin-web builds its codec list.
-                 * See: https://github.com/jellyfin/jellyfin-web/blob/285196329/src/scripts/browserDeviceProfile.js#L914-L925
+                 * This avoids Jellyfin's transcoder ever kicking in (which was degrading HDR/DV quality),
+                 * at the cost of the downstream player needing to handle the source codec/container itself.
                  *
-                 * Without these params Jellyfin would fall back to "m3u8" as the audio codec name, producing invalid FFmpeg commands.
-                 * See: https://github.com/jellyfin/jellyfin/issues/12926
+                 * We request the stream with the media source's own container (e.g. mkv, mp4) so Jellyfin
+                 * doesn't try to remux into something else.
                  */
-                string[] videoCodecs = ["h264", "hevc", "av1"];
-                string[] audioCodecs = ["aac", "mp3", "ac3", "eac3", "flac", "opus"];
+                var container = string.IsNullOrWhiteSpace(source.Container) ? "mkv" : source.Container;
                 var query = QueryString.Create(new Dictionary<string, string?>
                 {
                     ["mediaSourceId"] = source.Id,
                     ["api_key"] = authToken,
-                    ["videoCodec"] = string.Join(',', videoCodecs),
-                    ["audioCodec"] = string.Join(',', audioCodecs),
+                    ["static"] = "true",
                 });
-                var streamUrl = $"{baseUrl}/Videos/{dto.Id}/master.m3u8{query}";
-                LogBuffer.AddLog($"[Stream] Generated stream for {dto.Name} ({dto.Id}): {source.Name} - URL: {streamUrl}", LogLevel.Info);
+                var streamUrl = $"{baseUrl}/Videos/{dto.Id}/stream.{container}{query}";
+                LogBuffer.AddLog($"[Stream] Generated direct stream for {dto.Name} ({dto.Id}): {source.Name} - URL: {streamUrl}", LogLevel.Info);
                 return new StreamDto
                 {
                     Url = streamUrl,
