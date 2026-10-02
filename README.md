@@ -2,14 +2,7 @@
 
 This temporary fork replaces HLS with direct/static HTTP streaming so Jellyfin serves the original file with no transcoding. [Why?](https://github.com/wujekbogdan/jellio-plus-plus/issues/12)
 
-> [!IMPORTANT]
-> Now it's up to your device's hardware and media player whether the file can be played. So, make sure to download video files that are supported by your device(s).
-
-## Installation
-
-1. Just install [wujekbogdan's Jellio++](https://github.com/wujekbogdan/jellio-plus-plus) (v1.5.0)
-2. Go to Jellyfin's plugins folder and replace the `.dll` file with [this .dll](https://github.com/Tetrax-10/jellio-plus-plus-http/releases/download/v1.5.0/Jellyfin.Plugin.Jellio.dll)
-3. Restart jellyfin.
+> [!IMPORTANT]> Now it's up to your device's hardware and media player whether the file can be played. So, make sure to download video files that are supported by your device(s).
 
 # Jellio++
 
@@ -22,7 +15,7 @@ Stream your Jellyfin library directly in Stremio with seamless integration.
 - [**Jellio**](https://github.com/vanchaxy/jellio) by [Vanchaxy](https://github.com/vanchaxy) - the original Jellyfin↔Stremio bridge.
 - [**Jellio+**](https://github.com/InfiniteAvenger/jellio-plus) by [InfiniteAvenger](https://github.com/InfiniteAvenger) - fork adding Jellyfin 10.11.x support.
 - [**Jellio++**](https://github.com/wujekbogdan/jellio-plus-plus) by [wujekbogdan](https://github.com/wujekbogdan) - fork adding HLS streaming with proper seeking, OpenSubtitles hashes for subtitle matching, public base URL support, and a few other fixes upstream hasn't taken yet.
-- **Jellio++ (this fork)** - replaces HLS with direct/static HTTP streaming so Jellyfin serves the original file with no forced transcoding.
+- **Jellio++ Http (this fork)** - replaces HLS with direct/static HTTP streaming so Jellyfin serves the original file with no forced transcoding.
 
 **Every fork gets another `+`. We don't make the rules!**
 
@@ -49,16 +42,16 @@ Enable the optional Jellyseerr functionality to be able to directly request medi
 
 ### Download
 
-[Download](https://github.com/wujekbogdan/jellio-plus-plus/releases/latest) the most recent `jellio_<version>.zip` from the releases page.
+[Download](https://github.com/Tetrax-10/jellio-plus-plus-http/releases/latest) the most recent `jellio_<version>.zip` from the releases page.
 
-NOTICE: **Jellyfin 12 or later is required**. On Jellyfin 10.11.x, use [v1.6.0](https://github.com/wujekbogdan/jellio-plus-plus/releases/tag/v1.6.0).
+NOTICE: **Jellyfin 12 or later is required**. On Jellyfin 10.11.x, use [v1.6.0](https://github.com/Tetrax-10/jellio-plus-plus-http/releases/tag/v1.6.0).
 
 ### Installation
 
 NOTICE: Your Jellyfin instance needs to be reachable over HTTPS because Stremio requires HTTPS for addon URLs. You need an HTTPS tunnel such as Cloudflare Tunnel, Tailscale Funnel, ngrok, etc.
 
 1. Open Jellyfin Dashboard > Plugins > Manage Repositories
-2. Click "New Repository" and add "Jellio++" for the name, and `https://raw.githubusercontent.com/wujekbogdan/jellio-plus-plus/metadata/jellyfin-repo-manifest.json` for the repository url
+2. Click "New Repository" and add "Jellio++" for the name, and `https://raw.githubusercontent.com/Tetrax-10/jellio-plus-plus-http/metadata/jellyfin-repo-manifest.json` for the repository url
 3. Go back to Plugins, and under "All" find and install Jellio++
 4. Restart Jellyfin
 5. Jellyfin Dashboard > Plugins > Installed > Jellio++ and then click "Settings"
