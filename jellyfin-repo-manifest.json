@@ -9,11 +9,11 @@
         "versions": [
             {
                 "version": "1.8.1.0",
-                "changelog": "## What's Changed\r\n\r\n### Fixes\r\n\r\n- **AV1 video playback**: AV1 streams played audio, but no video. Now the video plays too. (fixes [#30](https://github.com/wujekbogdan/jellio-plus-plus/issues/30))\r\n\r\n### Known Issues\r\n\r\n- **AV1 doesn't play in Stremio Web**: it's a pre-existing bug. The Stremio server converts the video with an old ffmpeg version that can't read AV1 from these streams. The Stremio desktop and Android apps are not affected. ([Stremio/server-docker#60](https://github.com/Stremio/server-docker/issues/60))\r\n\r\n## Under the Hood\r\n\r\nDev-only changes:\r\n\r\n- **fMP4 for modern codecs**: streams with a codec that the legacy `MPEG-TS` container doesn't support, e.g., AV1, FLAC or Opus, now use the `fMP4` container. All other streams still use `MPEG-TS`. ([#34](https://github.com/wujekbogdan/jellio-plus-plus/pull/34))\r\n- **Analyzer warnings fixed** in the addon controller. ([#34](https://github.com/wujekbogdan/jellio-plus-plus/pull/34))\r\n\r\n**Full Changelog**: https://github.com/wujekbogdan/jellio-plus-plus/compare/v1.8.0...v1.8.1",
+                "changelog": "",
                 "targetAbi": "12.0.0.0",
-                "sourceUrl": "https://github.com/wujekbogdan/jellio-plus-plus/releases/download/v1.8.1/jellio_1.8.1.0.zip",
-                "checksum": "65dc7b2a94a10d5b65ff3cae8fcb1c07",
-                "timestamp": "2026-09-28T08:21:23Z"
+                "sourceUrl": "https://github.com/Tetrax-10/jellio-plus-plus-http/releases/download/v1.8.1/jellio_1.8.1.0.zip",
+                "checksum": "b1754c37b4821bb5733d6bb49295bc8d",
+                "timestamp": "2026-10-02T16:59:30Z"
             },
             {
                 "version": "1.8.0.0",
