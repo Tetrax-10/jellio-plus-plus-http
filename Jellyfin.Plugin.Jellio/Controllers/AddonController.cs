@@ -9,8 +9,13 @@ using System.Reflection;
 using System.Text.Json;
 using System.Threading.Tasks;
 using Jellyfin.Data.Enums;
+using Jellyfin.Database.Implementations.Entities;
+using Jellyfin.Plugin.Jellio.Authentication;
+using Jellyfin.Plugin.Jellio.Catalogs;
 using Jellyfin.Plugin.Jellio.Helpers;
+using Jellyfin.Plugin.Jellio.Library;
 using Jellyfin.Plugin.Jellio.Models;
+using Jellyfin.Plugin.Jellio.Streams;
 using MediaBrowser.Controller.Dto;
 using MediaBrowser.Controller.Entities;
 using MediaBrowser.Controller.Entities.TV;
@@ -36,19 +41,22 @@ public class AddonController : ControllerBase
     private readonly IUserViewManager _userViewManager;
     private readonly IDtoService _dtoService;
     private readonly ILibraryManager _libraryManager;
+    private readonly ItemResolver _itemResolver;
     private static readonly HttpClient _httpClient = new();
 
     public AddonController(
         IUserManager userManager,
         IUserViewManager userViewManager,
         IDtoService dtoService,
-        ILibraryManager libraryManager
+        ILibraryManager libraryManager,
+        ItemResolver itemResolver
     )
     {
         _userManager = userManager;
         _userViewManager = userViewManager;
         _dtoService = dtoService;
         _libraryManager = libraryManager;
+        _itemResolver = itemResolver;
     }
 
     private async Task<string?> GetTitleFromCinemeta(string imdbId, string type)
@@ -56,10 +64,11 @@ public class AddonController : ControllerBase
         try
         {
             var stremioType = type == "movie" ? "movie" : "series";
-            var response = await _httpClient.GetAsync($"https://v3-cinemeta.strem.io/meta/{stremioType}/tt{imdbId}.json");
+            var response = await _httpClient.GetAsync($"https://v3-cinemeta.strem.io/meta/{stremioType}/tt{imdbId}.json").ConfigureAwait(false);
             if (response.IsSuccessStatusCode)
             {
-                using var doc = JsonDocument.Parse(await response.Content.ReadAsStreamAsync());
+                var content = await response.Content.ReadAsStreamAsync().ConfigureAwait(false);
+                using var doc = await JsonDocument.ParseAsync(content).ConfigureAwait(false);
                 if (doc.RootElement.TryGetProperty("meta", out var meta) &&
                     meta.TryGetProperty("name", out var name))
                 {
@@ -75,15 +84,7 @@ public class AddonController : ControllerBase
         return null;
     }
 
-    private string GetBaseUrl(string? overrideBaseUrl = null)
-    {
-        if (!string.IsNullOrWhiteSpace(overrideBaseUrl))
-        {
-            return overrideBaseUrl!.TrimEnd('/');
-        }
-
-        return $"{Request.Scheme}://{Request.Host}{Request.PathBase}";
-    }
+    private string GetBaseUrl(string? overrideBaseUrl = null) => JellyfinBaseUrl.Of(Request, overrideBaseUrl);
 
     private static MetaDto MapToMeta(
         BaseItemDto dto,
@@ -143,15 +144,8 @@ public class AddonController : ControllerBase
         return meta;
     }
 
-    private OkObjectResult GetStreamsResult(Guid userId, IReadOnlyList<BaseItem> items, string authToken, string? publicBaseUrl = null)
+    private OkObjectResult GetStreamsResult(User user, IReadOnlyList<BaseItem> items, string authToken, string? publicBaseUrl = null)
     {
-        var user = _userManager.GetUserById(userId);
-        if (user == null)
-        {
-            LogBuffer.AddLog($"[Stream] User not found: {userId}", LogLevel.Warning);
-            return Ok(new { streams = Array.Empty<object>() });
-        }
-
         LogBuffer.AddLog($"[Stream] Processing {items.Count} item(s) for user {user.Username}", LogLevel.Info);
         var baseUrl = GetBaseUrl(publicBaseUrl);
         LogBuffer.AddLog($"[Stream] Base URL: {baseUrl}", LogLevel.Info);
@@ -161,53 +155,57 @@ public class AddonController : ControllerBase
 
         var streams = dtos.SelectMany(dto =>
         {
-            int mediaSourceCount = 0;
-            if (dto.MediaSources != null)
-            {
-                mediaSourceCount = dto.MediaSources.Count();
-            }
-
+            var mediaSourceCount = dto.MediaSources?.Length ?? 0;
             LogBuffer.AddLog($"[Stream] Processing DTO: {dto.Name} (Id: {dto.Id}, MediaSources: {mediaSourceCount})", LogLevel.Info);
             if (dto.MediaSources == null)
             {
                 return Enumerable.Empty<StreamDto>();
             }
 
-            return dto.MediaSources.Select(source =>
+            var mediaSources = dto.MediaSources.ToList();
+            var isMultiMediaSource = mediaSources.Count > 1;
+
+            return mediaSources.SelectMany(source =>
             {
-                /*
-                 * We use Jellyfin's direct/static stream endpoint instead of the HLS (master.m3u8) endpoint.
-                 * "static=true" tells Jellyfin to serve the original file bytes as-is, with no transcoding,
-                 * no remuxing, and no HLS segmenting - regardless of client codec support.
-                 *
-                 * This avoids Jellyfin's transcoder ever kicking in (which was degrading HDR/DV quality),
-                 * at the cost of the downstream player needing to handle the source codec/container itself.
-                 *
-                 * We request the stream with the media source's own container (e.g. mkv, mp4) so Jellyfin
-                 * doesn't try to remux into something else.
-                 */
-                var container = string.IsNullOrWhiteSpace(source.Container) ? "mkv" : source.Container;
-                var query = QueryString.Create(new Dictionary<string, string?>
+                string DescribeEntry(AudioTrackChoice? audioTrack)
                 {
-                    ["mediaSourceId"] = source.Id,
-                    ["api_key"] = authToken,
-                    ["static"] = "true",
-                });
-                var streamUrl = $"{baseUrl}/Videos/{dto.Id}/stream.{container}{query}";
-                LogBuffer.AddLog($"[Stream] Generated direct stream for {dto.Name} ({dto.Id}): {source.Name} - URL: {streamUrl}", LogLevel.Info);
-                return new StreamDto
-                {
-                    Url = streamUrl,
-                    Name = "Jellio++",
-                    Description = source.Name,
-                    BehaviorHints = new BehaviorHintsDto
+                    if (audioTrack is null)
                     {
-                        Filename = string.IsNullOrEmpty(source.Path) ? null : Path.GetFileName(source.Path),
-                        VideoSize = source.Size,
-                        VideoHash = OpenSubtitlesHash.ComputeFromPath(source.Path),
-                        NotWebReady = true,
-                    },
-                };
+                        return source.Name;
+                    }
+
+                    return isMultiMediaSource ? $"{audioTrack.Label} · {source.Name}" : audioTrack.Label;
+                }
+
+                StreamDto BuildEntry(EntryStreams entry)
+                {
+                    var container = string.IsNullOrWhiteSpace(source.Container) ? "mkv" : source.Container;
+                    var query = QueryString.Create(new Dictionary<string, string?>
+                    {
+                        ["mediaSourceId"] = source.Id,
+                        ["api_key"] = authToken,
+                        ["static"] = "true",
+                    });
+                    var streamUrl = $"{baseUrl}/Videos/{dto.Id}/stream.{container}{query}";
+                    LogBuffer.AddLog($"[Stream] Generated direct stream for {dto.Name} ({dto.Id}): {source.Name} - container: {SegmentContainerSelection.For(entry)} - URL: {streamUrl}", LogLevel.Info);
+                    return new StreamDto
+                    {
+                        Url = streamUrl,
+                        Name = "Jellio++",
+                        Description = DescribeEntry(entry.AudioTrack),
+                        BehaviorHints = new BehaviorHintsDto
+                        {
+                            Filename = string.IsNullOrEmpty(source.Path) ? null : Path.GetFileName(source.Path),
+                            VideoSize = source.Size,
+                            VideoHash = OpenSubtitlesHash.ComputeFromPath(source.Path),
+                            NotWebReady = true,
+                        },
+                    };
+                }
+
+                var entries = EntryStreams.ForSource(source);
+                LogBuffer.AddLog($"[Stream] Source \"{source.Name}\": {entries.Count} stream entry(ies)", LogLevel.Info);
+                return entries.Select(BuildEntry);
             });
         }).ToList();
 
@@ -216,11 +214,9 @@ public class AddonController : ControllerBase
     }
 
     [HttpGet("manifest.json")]
-    public IActionResult GetManifest([ConfigFromBase64Json] ConfigModel config)
+    public IActionResult GetManifest([ConfigFromBase64Json] ConfigModel config, [AuthenticatedUser] User user)
     {
-        var userId = (Guid)HttpContext.Items["JellioUserId"]!;
-
-        var userLibraries = LibraryHelper.GetUserLibraries(userId, _userManager, _userViewManager, _dtoService);
+        var userLibraries = LibraryHelper.GetUserLibraries(user.Id, _userManager, _userViewManager, _dtoService);
         userLibraries = Array.FindAll(userLibraries, l => config.LibrariesGuids.Contains(l.Id));
         if (userLibraries.Length != config.LibrariesGuids.Count)
         {
@@ -265,6 +261,12 @@ public class AddonController : ControllerBase
                     types = new[] { "movie", "series" },
                     idPrefixes = new[] { "jelliopp" },
                 },
+                new
+                {
+                    name = "subtitles",
+                    types = new[] { "movie", "series" },
+                    idPrefixes = new[] { "tt", "jelliopp" },
+                },
             },
             types = new[] { "movie", "series" },
             idPrefixes = new[] { "tt", "jelliopp" },
@@ -280,21 +282,20 @@ public class AddonController : ControllerBase
     [HttpGet("catalog/{stremioType}/{catalogId:guid}.json")]
     public IActionResult GetCatalog(
         [ConfigFromBase64Json] ConfigModel config,
+        [AuthenticatedUser] User user,
         StremioType stremioType,
         Guid catalogId,
         string? extra = null
     )
     {
-        var userId = (Guid)HttpContext.Items["JellioUserId"]!;
-
-        var userLibraries = LibraryHelper.GetUserLibraries(userId, _userManager, _userViewManager, _dtoService);
+        var userLibraries = LibraryHelper.GetUserLibraries(user.Id, _userManager, _userViewManager, _dtoService);
         var catalogLibrary = Array.Find(userLibraries, l => l.Id == catalogId);
         if (catalogLibrary == null)
         {
             return NotFound();
         }
 
-        var item = _libraryManager.GetParentItem(catalogLibrary.Id, userId);
+        var item = _libraryManager.GetParentItem(catalogLibrary.Id, user.Id);
         if (item is not Folder folder)
         {
             folder = _libraryManager.GetUserRootFolder();
@@ -320,18 +321,13 @@ public class AddonController : ControllerBase
             Fields = [ItemFields.ProviderIds, ItemFields.Overview, ItemFields.Genres],
         };
 
-        var user = _userManager.GetUserById(userId);
-        if (user == null)
-        {
-            return Unauthorized();
-        }
-
         var query = new InternalItemsQuery(user)
         {
             Recursive = true, // need this for search to work
             IncludeItemTypes = [BaseItemKind.Movie, BaseItemKind.Series],
             Limit = 100,
             StartIndex = startIndex,
+            OrderBy = CatalogOrdering.For(config.CatalogSortOrders.GetValueOrDefault(catalogId, CatalogSortOrder.Name), stremioType),
             SearchTerm = searchTerm,
             ParentId = catalogLibrary.Id,
             DtoOptions = dtoOptions,
@@ -347,22 +343,15 @@ public class AddonController : ControllerBase
     [HttpGet("meta/{stremioType}/jelliopp:{mediaId:guid}.json")]
     public IActionResult GetMeta(
         [ConfigFromBase64Json] ConfigModel config,
+        [AuthenticatedUser] User user,
         StremioType stremioType,
         Guid mediaId
     )
     {
-        var userId = (Guid)HttpContext.Items["JellioUserId"]!;
-
-        var item = _libraryManager.GetItemById<BaseItem>(mediaId, userId);
+        var item = _libraryManager.GetItemById<BaseItem>(mediaId, user.Id);
         if (item == null)
         {
             return NotFound();
-        }
-
-        var user = _userManager.GetUserById(userId);
-        if (user == null)
-        {
-            return Unauthorized();
         }
 
         var dtoOptions = new DtoOptions
@@ -403,15 +392,15 @@ public class AddonController : ControllerBase
     [HttpGet("stream/{stremioType}/jelliopp:{mediaId:guid}.json")]
     public IActionResult GetStream(
         [ConfigFromBase64Json] ConfigModel config,
+        [AuthenticatedUser] User user,
         StremioType stremioType,
         Guid mediaId
     )
     {
-        var userId = (Guid)HttpContext.Items["JellioUserId"]!;
         LogBuffer.AddLog($"[Stream] Stream request for {stremioType} with ID: {mediaId}", LogLevel.Info);
 
-        var item = _libraryManager.GetItemById<BaseItem>(mediaId, userId);
-        if (item == null)
+        var items = _itemResolver.Resolve(user, new LibraryItemId(mediaId));
+        if (items.Count == 0)
         {
             LogBuffer.AddLog($"[Stream] Item not found: {mediaId}", LogLevel.Warning);
             // If the item isn't in the library, we can't resolve provider IDs here.
@@ -419,39 +408,25 @@ public class AddonController : ControllerBase
             return Ok(new { streams = Array.Empty<object>() });
         }
 
-        LogBuffer.AddLog($"[Stream] Found item: {item.Name} (Type: {item.GetType().Name}, Id: {item.Id})", LogLevel.Info);
-        var result = GetStreamsResult(userId, [item], config.AuthToken, config.PublicBaseUrl);
-        LogBuffer.AddLog($"[Stream] Returning stream result for {item.Name}", LogLevel.Info);
-        return result;
+        LogBuffer.AddLog($"[Stream] Found {items.Count} item(s) for {mediaId}", LogLevel.Info);
+        return GetStreamsResult(user, items, config.AuthToken, config.PublicBaseUrl);
     }
 
     [HttpGet("stream/movie/tt{imdbId}.json")]
     public async Task<IActionResult> GetStreamImdbMovie(
         [ConfigFromBase64Json] ConfigModel config,
+        [AuthenticatedUser] User user,
         string imdbId
     )
     {
-        var userId = (Guid)HttpContext.Items["JellioUserId"]!;
-
-        var user = _userManager.GetUserById(userId);
-        if (user == null)
-        {
-            return Unauthorized();
-        }
-
-        var query = new InternalItemsQuery(user)
-        {
-            HasAnyProviderId = new Dictionary<string, string> { ["Imdb"] = $"tt{imdbId}" },
-            IncludeItemTypes = [BaseItemKind.Movie],
-        };
-        var items = _libraryManager.GetItemList(query);
+        var items = _itemResolver.Resolve(user, new ImdbMovieId($"tt{imdbId}"));
 
         if (items.Count == 0)
         {
             // No local stream found; provide a Jellyseerr request stream if configured
             if (config.JellyseerrEnabled && !string.IsNullOrWhiteSpace(config.JellyseerrUrl))
             {
-                var title = await GetTitleFromCinemeta(imdbId, "movie");
+                var title = await GetTitleFromCinemeta(imdbId, "movie").ConfigureAwait(false);
                 if (!string.IsNullOrWhiteSpace(title))
                 {
                     var baseUrl = GetBaseUrl(config.PublicBaseUrl);
@@ -467,68 +442,21 @@ public class AddonController : ControllerBase
             return Ok(new { streams = Array.Empty<object>() });
         }
 
-        return GetStreamsResult(userId, items, config.AuthToken, config.PublicBaseUrl);
+        return GetStreamsResult(user, items, config.AuthToken, config.PublicBaseUrl);
     }
 
     [HttpGet("stream/series/tt{imdbId}:{seasonNum:int}:{episodeNum:int}.json")]
     public async Task<IActionResult> GetStreamImdbTv(
         [ConfigFromBase64Json] ConfigModel config,
+        [AuthenticatedUser] User user,
         string imdbId,
         int seasonNum,
         int episodeNum
     )
     {
-        var userId = (Guid)HttpContext.Items["JellioUserId"]!;
         LogBuffer.AddLog($"[Stream] TV Episode request: IMDB={imdbId}, Season={seasonNum}, Episode={episodeNum}", LogLevel.Info);
 
-        var user = _userManager.GetUserById(userId);
-        if (user == null)
-        {
-            LogBuffer.AddLog($"[Stream] User not found: {userId}", LogLevel.Warning);
-            return Unauthorized();
-        }
-
-        var seriesQuery = new InternalItemsQuery(user)
-        {
-            IncludeItemTypes = [BaseItemKind.Series],
-            HasAnyProviderId = new Dictionary<string, string> { ["Imdb"] = $"tt{imdbId}" },
-        };
-        var seriesItems = _libraryManager.GetItemList(seriesQuery);
-        LogBuffer.AddLog($"[Stream] Found {seriesItems.Count} series with IMDB tt{imdbId}", LogLevel.Info);
-
-        if (seriesItems.Count == 0)
-        {
-            LogBuffer.AddLog($"[Stream] Series not found for IMDB tt{imdbId}", LogLevel.Warning);
-            // Series not found - show Jellyseerr option if enabled
-            if (config.JellyseerrEnabled && !string.IsNullOrWhiteSpace(config.JellyseerrUrl))
-            {
-                var title = await GetTitleFromCinemeta(imdbId, "tv");
-                if (!string.IsNullOrWhiteSpace(title))
-                {
-                    var baseUrl = GetBaseUrl(config.PublicBaseUrl);
-                    var requestUrl = $"{baseUrl}/jelliopp/{Request.RouteValues["config"]}/jellyseerr?type=tv&imdbId=tt{imdbId}&title={Uri.EscapeDataString(title)}&season={seasonNum}&episode={episodeNum}";
-                    var streams = new[]
-                    {
-                        new { url = requestUrl, name = "📥 Request via Jellyseerr", description = "Click to send request to Jellyseerr" }
-                    };
-                    return Ok(new { streams });
-                }
-            }
-
-            return Ok(new { streams = Array.Empty<object>() });
-        }
-
-        var seriesIds = seriesItems.Select(s => s.Id).ToArray();
-        LogBuffer.AddLog($"[Stream] Series IDs: {string.Join(", ", seriesIds)}", LogLevel.Info);
-
-        var episodeQuery = new InternalItemsQuery(user)
-        {
-            IncludeItemTypes = [BaseItemKind.Episode],
-            AncestorIds = seriesIds,
-            ParentIndexNumber = seasonNum,
-            IndexNumber = episodeNum,
-        };
-        var episodeItems = _libraryManager.GetItemList(episodeQuery);
+        var episodeItems = _itemResolver.Resolve(user, new ImdbEpisodeId($"tt{imdbId}", seasonNum, episodeNum));
         LogBuffer.AddLog($"[Stream] Found {episodeItems.Count} episode(s) for Season {seasonNum}, Episode {episodeNum}", LogLevel.Info);
 
         if (episodeItems.Count == 0)
@@ -537,7 +465,7 @@ public class AddonController : ControllerBase
             // Episode not found - show Jellyseerr option if enabled
             if (config.JellyseerrEnabled && !string.IsNullOrWhiteSpace(config.JellyseerrUrl))
             {
-                var title = await GetTitleFromCinemeta(imdbId, "tv");
+                var title = await GetTitleFromCinemeta(imdbId, "tv").ConfigureAwait(false);
                 if (!string.IsNullOrWhiteSpace(title))
                 {
                     var baseUrl = GetBaseUrl(config.PublicBaseUrl);
@@ -554,6 +482,6 @@ public class AddonController : ControllerBase
         }
 
         LogBuffer.AddLog($"[Stream] Returning streams for {episodeItems.Count} episode(s)", LogLevel.Info);
-        return GetStreamsResult(userId, episodeItems, config.AuthToken, config.PublicBaseUrl);
+        return GetStreamsResult(user, episodeItems, config.AuthToken, config.PublicBaseUrl);
     }
 }
